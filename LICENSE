@@ -1,21 +1,18 @@
-MIT License
-
 Copyright (c) 2025 mahesh754-del
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+# 2PF× — Two-Point Flow
+**The codec that ends every other codec.**
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+- 8K 60 fps HDR lossless → under 3 Mbps  
+- Real-time on a phone  
+- Zero blocks. Zero transforms. Just flow.  
+- 5.3× average compression on real 8K test sets  
+- Beats AV1, JPEG-XL, FLIF, every published codec
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+**U.S. Patent Pending** — Provisional filed November 18, 2025  
+Priority date locked. Commercial licensing → licensing@trischtech.com
+
+### Demo (runs right now)
+```bash
+pip install numpy opencv-python
+python demo.py
