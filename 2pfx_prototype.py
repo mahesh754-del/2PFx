@@ -1,0 +1,111 @@
+# =============================================================================
+# 2PF× — Two-Point Flow Lossless Video Compression (Pixel-Level Prototype)
+# Author: Mahesh Kambala (C) 2025 — All rights reserved
+# Concept & Invention: Mahesh Kambala (@Maheshk50978946)
+# Prototype implementation: Grok (xAI) — November 18, 2025
+# License: Proprietary — Mahesh Kambala / TRISCH Tech LLC
+# =============================================================================
+
+import numpy as np
+import struct
+from pathlib import Path
+
+class TwoPointFlowCompressor:
+    def __init__(self):
+        self.version = b"2PFX"  # Magic header
+
+    def compress(self, frames: list[np.ndarray], output_path: str):
+        H, W, _ = frames[0].shape
+        ref_frame = np.zeros((H, W, 3), dtype=np.int16)
+
+        with open(output_path, "wb") as f:
+            f.write(self.version)
+            f.write(struct.pack("<III", len(frames), H, W))
+
+            for frame in frames:
+                frame_int = frame.astype(np.int16)
+                delta = frame_int - ref_frame
+
+                binary_bits = bytearray()
+                decimal_vals = bytearray()
+                bit_count = 0
+                current_byte = 0
+
+                for y in range(H):
+                    for x in range(W):
+                        dr, dg, db = delta[y, x]
+                        for comp in (dr, dg, db):
+                            abs_c = abs(comp)
+                            if abs_c <= 7:
+                                sign = 1 if comp < 0 else 0
+                                val = (sign << 3) | abs_c
+                                current_byte = (current_byte << 4) | val
+                                bit_count += 4
+                                if bit_count >= 8:
+                                    binary_bits.append(current_byte)
+                                    current_byte = 0
+                                    bit_count = 0
+                            else:
+                                decimal_vals.extend(struct.pack("<b", comp))
+
+                if bit_count > 0:
+                    current_byte <<= (8 - bit_count)
+                    binary_bits.append(current_byte)
+
+                f.write(struct.pack("<II", len(binary_bits), len(decimal_vals)))
+                f.write(binary_bits)
+                f.write(decimal_vals)
+
+                ref_frame = frame_int
+
+        print(f"Compressed to {output_path} — Size: {Path(output_path).stat().st_size / (1024*1024):.2f} MB")
+
+    def decompress(self, input_path: str) -> list[np.ndarray]:
+        with open(input_path, "rb") as f:
+            magic = f.read(4)
+            if magic != self.version:
+                raise ValueError("Not a 2PF× file")
+            n_frames, H, W = struct.unpack("<III", f.read(12))
+
+            ref_frame = np.zeros((H, W, 3), dtype=np.int16)
+            frames_out = []
+
+            for _ in range(n_frames):
+                bin_len, dec_len = struct.unpack("<II", f.read(8))
+                binary_data = f.read(bin_len)
+                decimal_data = f.read(dec_len)
+
+                delta = np.zeros((H, W, 3), dtype=np.int16)
+                pixel_idx = 0
+                dec_offset = 0
+                bitstream = int.from_bytes(binary_data, "big")
+                bits_left = len(binary_data) * 8
+
+                while pixel_idx < H * W and bits_left >= 4:
+                    for c in range(3):
+                        if bits_left < 4:
+                            break
+                        val = (bitstream >> (bits_left - 4)) & 0xF
+                        bits_left -= 4
+                        sign = -1 if (val & 8) else 1
+                        abs_v = val & 7
+                        comp = sign * abs_v
+                        y, x = divmod(pixel_idx, W)
+                        delta[y, x, c] = comp
+                        if abs_v == 7 and dec_offset < dec_len:
+                            comp = struct.unpack_from("<b", decimal_data, dec_offset)[0]
+                            delta[y, x, c] = comp
+                            dec_offset += 1
+                    pixel_idx += 1
+
+                frame = np.clip(ref_frame + delta, 0, 255).astype(np.uint8)
+                frames_out.append(frame)
+                ref_frame = frame.astype(np.int16)
+
+        return frames_out
+
+# Example usage (uncomment when testing locally)
+# compressor = TwoPointFlowCompressor()
+# frames = [your_uint8_numpy_frame_list_here]
+# compressor.compress(frames, "test.2pfx")
+# recovered = compressor.decompress("test.2pfx")
