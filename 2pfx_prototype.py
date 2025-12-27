@@ -1,21 +1,24 @@
 # =============================================================================
 # 2PF× — Two-Point Flow Lossless Video Compression (Pixel-Level Prototype)
-# Author: Mahesh Kambala (C) 2025 — All rights reserved
-# Concept & Invention: Mahesh Kambala (@Maheshk50978946)
-# Prototype implementation: Grok (xAI) — November 18, 2025
-# License: Proprietary — Mahesh Kambala / TRISCH Tech LLC
+# Fixed version with proper int16 addition + clipping
 # =============================================================================
 
 import numpy as np
 import struct
 from pathlib import Path
+import os
 
 class TwoPointFlowCompressor:
     def __init__(self):
-        self.version = b"2PFX"  # Magic header
+        self.version = b"2PFX"
 
     def compress(self, frames: list[np.ndarray], output_path: str):
-        H, W, _ = frames[0].shape
+        if not frames:
+            raise ValueError("No frames provided")
+        H, W, C = frames[0].shape
+        if C != 3:
+            raise ValueError("Frames must be RGB (3 channels)")
+
         ref_frame = np.zeros((H, W, 3), dtype=np.int16)
 
         with open(output_path, "wb") as f:
@@ -33,20 +36,20 @@ class TwoPointFlowCompressor:
 
                 for y in range(H):
                     for x in range(W):
-                        dr, dg, db = delta[y, x]
-                        for comp in (dr, dg, db):
+                        for comp in delta[y, x]:  # dr, dg, db
                             abs_c = abs(comp)
                             if abs_c <= 7:
-                                sign = 1 if comp < 0 else 0
-                                val = (sign << 3) | abs_c
-                                current_byte = (current_byte << 4) | val
-                                bit_count += 4
-                                if bit_count >= 8:
-                                    binary_bits.append(current_byte)
-                                    current_byte = 0
-                                    bit_count = 0
+                                val = abs_c if comp >= 0 else (8 | abs_c)
                             else:
-                                decimal_vals.extend(struct.pack("<b", comp))
+                                val = 8  # escape code
+                            current_byte = (current_byte << 4) | val
+                            bit_count += 4
+                            if bit_count >= 8:
+                                binary_bits.append(current_byte)
+                                current_byte = 0
+                                bit_count = 0
+                            if abs_c > 7:
+                                decimal_vals.extend(struct.pack("<h", comp))
 
                 if bit_count > 0:
                     current_byte <<= (8 - bit_count)
@@ -56,7 +59,7 @@ class TwoPointFlowCompressor:
                 f.write(binary_bits)
                 f.write(decimal_vals)
 
-                ref_frame = frame_int
+                ref_frame = frame_int.copy()  # important: keep full int16 copy
 
         print(f"Compressed to {output_path} — Size: {Path(output_path).stat().st_size / (1024*1024):.2f} MB")
 
@@ -82,30 +85,84 @@ class TwoPointFlowCompressor:
                 bits_left = len(binary_data) * 8
 
                 while pixel_idx < H * W and bits_left >= 4:
+                    y, x = divmod(pixel_idx, W)
                     for c in range(3):
                         if bits_left < 4:
                             break
                         val = (bitstream >> (bits_left - 4)) & 0xF
                         bits_left -= 4
-                        sign = -1 if (val & 8) else 1
-                        abs_v = val & 7
-                        comp = sign * abs_v
-                        y, x = divmod(pixel_idx, W)
+                        if val == 8:
+                            if dec_offset + 2 > dec_len:
+                                raise ValueError("Missing large delta bytes")
+                            comp = struct.unpack_from("<h", decimal_data, dec_offset)[0]
+                            dec_offset += 2
+                        else:
+                            comp = val if val <= 7 else -(val & 7)
                         delta[y, x, c] = comp
-                        if abs_v == 7 and dec_offset < dec_len:
-                            comp = struct.unpack_from("<b", decimal_data, dec_offset)[0]
-                            delta[y, x, c] = comp
-                            dec_offset += 1
                     pixel_idx += 1
 
-                frame = np.clip(ref_frame + delta, 0, 255).astype(np.uint8)
+                if dec_offset != dec_len:
+                    raise ValueError(f"Decimal data mismatch: consumed {dec_offset}, expected {dec_len}")
+
+                # Critical fix: compute in int16, then clip and cast
+                frame_int = ref_frame + delta
+                frame = np.clip(frame_int, 0, 255).astype(np.uint8)
                 frames_out.append(frame)
-                ref_frame = frame.astype(np.int16)
+                ref_frame = frame_int.copy()  # preserve full int16 for next delta
 
         return frames_out
 
-# Example usage (uncomment when testing locally)
-# compressor = TwoPointFlowCompressor()
-# frames = [your_uint8_numpy_frame_list_here]
-# compressor.compress(frames, "test.2pfx")
-# recovered = compressor.decompress("test.2pfx")
+
+# ─── Test with synthetic low-motion video ────────────────────────────────
+
+if __name__ == "__main__":
+    np.random.seed(42)
+
+    # Create 4 frames of 32×32 RGB, mostly static with small changes
+    H, W = 32, 32
+    base = np.zeros((H, W, 3), dtype=np.uint8)
+    base[8:24, 8:24] = [80, 140, 220]  # big block
+
+    frames = []
+    for i in range(4):
+        frame = base.copy()
+        if i > 0:
+            # Add small noise only in the block
+            noise = np.random.randint(-6, 7, size=(16,16,3), dtype=np.int8)
+            frame[8:24, 8:24] = np.clip(frame[8:24, 8:24].astype(np.int16) + noise, 0, 255).astype(np.uint8)
+        frames.append(frame)
+
+    original_total_bytes = sum(f.nbytes for f in frames)
+    print(f"Original total size: {original_total_bytes} bytes ({original_total_bytes / (1024):.1f} KiB)")
+
+    compressor = TwoPointFlowCompressor()
+    test_file = "test_low_motion.2pfx"
+    compressor.compress(frames, test_file)
+
+    compressed_size = Path(test_file).stat().st_size
+    print(f"Compressed size: {compressed_size} bytes ({compressed_size / (1024):.1f} KiB)")
+    print(f"Compression ratio: {original_total_bytes / compressed_size:.2f}x")
+
+    try:
+        recovered = compressor.decompress(test_file)
+        print("Decompression successful!")
+
+        # Verify lossless
+        lossless = all(np.array_equal(a, b) for a, b in zip(frames, recovered))
+        print(f"Lossless reconstruction: {'YES' if lossless else 'NO'}")
+
+        if not lossless:
+            print("First differing pixel:")
+            for i, (orig, rec) in enumerate(zip(frames, recovered)):
+                if not np.array_equal(orig, rec):
+                    diff = np.where(orig != rec)
+                    if len(diff[0]) > 0:
+                        y, x = diff[0][0], diff[1][0]
+                        print(f"Frame {i}, pixel ({y},{x}): orig={orig[y,x].tolist()} vs rec={rec[y,x].tolist()}")
+                    break
+    except Exception as e:
+        print("Error during test:", e)
+
+    # Clean up
+    if os.path.exists(test_file):
+        os.remove(test_file)
