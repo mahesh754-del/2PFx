@@ -1,2 +1,2 @@
 # 2PFx
-Game changer : Lossless 8K video at &lt;3 Mbps — Patent Pending (Nov 18, 2025)
+Uses 2 point flow compression with capturing deltas (offsets) and with a simple plug-in, decompression can happen on the fly, reducing network bandwidths
